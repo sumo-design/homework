@@ -1,0 +1,9 @@
+import os
+DATA_PATH = "data/sample-wos"
+TOP_KEY = 50
+EDGE_THRESH = 2
+TABLE_OUT = "outputs/tables"
+FIG_OUT = "outputs/figures"
+HTML_OUT = "outputs/html"
+for p in [TABLE_OUT,FIG_OUT,HTML_OUT]:
+    os.makedirs(p,exist_ok=True)
