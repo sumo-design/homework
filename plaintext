@@ -18,3 +18,237 @@ homework/
 ├── run_full_analysis.py
 ├── requirements.txt
 └── README.md
+import os
+
+# ====================== 数据路径 ======================
+DATA_FOLDER = "data/sample-wos"
+
+# ====================== 分析参数 ======================
+TOP_KEYWORD_NUM = 50
+CO_OCCUR_THRESHOLD = 2
+LOUVAIN_RESOLUTION = 1.0
+
+# ====================== 输出路径 ======================
+OUTPUT_CSV = "output/csv_result"
+OUTPUT_PIC = "output/pic_static"
+OUTPUT_HTML = "output/html_interactive"
+OUTPUT_REPORT = "output/report"
+
+# 自动创建目录
+for p in [OUTPUT_CSV, OUTPUT_PIC, OUTPUT_HTML, OUTPUT_REPORT]:
+    os.makedirs(p, exist_ok=True)
+import os
+import pandas as pd
+
+def read_wos_batch(folder_path):
+    records = []
+    for fn in os.listdir(folder_path):
+        if fn.endswith(".txt"):
+            fp = os.path.join(folder_path, fn)
+            with open(fp, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            rec = {}
+            for line in lines:
+                line = line.strip()
+                if len(line) < 3:
+                    continue
+                fd = line[:2]
+                val = line[3:].strip()
+                if fd == "PT":
+                    if rec:
+                        records.append(rec)
+                    rec = {}
+                if fd in ["TI", "AU", "SO", "DE", "PY", "C1"]:
+                    if fd in rec:
+                        rec[fd] += "; " + val
+                    else:
+                        rec[fd] = val
+            if rec:
+                records.append(rec)
+
+    df = pd.DataFrame(records)
+    df.rename(columns={
+        "TI": "标题",
+        "AU": "作者",
+        "SO": "期刊",
+        "DE": "关键词",
+        "PY": "年份",
+        "C1": "机构"
+    }, inplace=True)
+    return df
+import pandas as pd
+
+def clean_data(df, source="wos"):
+    df = df.copy()
+    df = df.dropna(subset=["关键词", "年份"])
+    df = df[df["关键词"].str.len() > 1]
+    df["年份"] = pd.to_numeric(df["年份"], errors="coerce")
+    df = df[df["年份"] >= 1900]
+    return df
+import pandas as pd
+
+def calc_basic_indices(df):
+    total = len(df)
+    year_cnt = df["年份"].value_counts().sort_index().to_dict()
+    auth_cnt = df["作者"].str.split("; ").explode().value_counts().head(10).to_dict()
+    kw_cnt = df["关键词"].str.split("; ").explode().value_counts().head(10).to_dict()
+    journal_cnt = df["期刊"].value_counts().head(10).to_dict()
+
+    return {
+        "总文献量": total,
+        "年度发文量": year_cnt,
+        "高产作者TOP10": auth_cnt,
+        "高频关键词TOP10": kw_cnt,
+        "高发文期刊TOP10": journal_cnt
+    }
+import pandas as pd
+from collections import defaultdict
+
+def build_co_occurrence(df, top_n=50):
+    kw_series = df["关键词"].str.split("; ").dropna()
+    all_kw = kw_series.explode().value_counts().head(top_n).index.tolist()
+
+    matrix = pd.DataFrame(0, index=all_kw, columns=all_kw)
+    for kws in kw_series:
+        kws = [k for k in kws if k in all_kw]
+        for i in range(len(kws)):
+            for j in range(i + 1, len(kws)):
+                a, b = kws[i], kws[j]
+                matrix.loc[a, b] += 1
+                matrix.loc[b, a] += 1
+    return matrix, all_kw
+import networkx as nx
+import community as community_louvain
+import pandas as pd
+
+def cluster_network(matrix, threshold=2):
+    G = nx.Graph()
+    for i in range(len(matrix)):
+        for j in range(i + 1, len(matrix)):
+            w = matrix.iloc[i, j]
+            if w >= threshold:
+                G.add_edge(matrix.index[i], matrix.columns[j], weight=w)
+
+    partition = community_louvain.best_partition(G, resolution=1.0)
+    nx.set_node_attributes(G, partition, "cluster")
+
+    stats = []
+    for cid in set(partition.values()):
+        nodes = [n for n, c in partition.items() if c == cid]
+        sg = G.subgraph(nodes)
+        stats.append({
+            "聚类ID": cid,
+            "节点数": len(nodes),
+            "密度": round(nx.density(sg), 3),
+            "中心关键词": max(nodes, key=lambda x: sg.degree(x)) if nodes else ""
+        })
+    return G, partition, pd.DataFrame(stats)
+import matplotlib.pyplot as plt
+import config
+
+def plot_year_trend(df, path=f"{config.OUTPUT_PIC}/year_trend.png"):
+    yc = df["年份"].value_counts().sort_index()
+    plt.figure(figsize=(10, 5))
+    plt.plot(yc.index, yc.values, marker="o", color="#45B7D1")
+    plt.title("年度发文趋势")
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    plt.close()
+from pyvis.network import Network
+import config
+
+def interactive_cluster_graph(G, partition, path=f"{config.OUTPUT_HTML}/keyword_graph.html"):
+    net = Network(height="750px", width="100%", bgcolor="#222", font_color="white")
+    net.force_atlas_2based()
+
+    colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+    for node in G.nodes:
+        c = partition[node]
+        net.add_node(
+            node,
+            color=colors[c % len(colors)],
+            size=G.degree(node) * 3 + 10,
+            title=f"关键词：{node}\n聚类：{c}"
+        )
+
+    for u, v, d in G.edges(data=True):
+        net.add_edge(u, v, width=d["weight"] / 3, title=f"共现：{d['weight']}")
+
+    net.show(path, notebook=False)
+import pandas as pd
+import config
+
+def generate_markdown_report(indices, cluster_df):
+    md = f"""# 文献计量分析报告
+
+## 1. 基础指标
+- 总文献量：{indices['总文献量']}
+
+## 2. 聚类统计
+{cluster_df.to_markdown(index=False)}
+"""
+    p = f"{config.OUTPUT_REPORT}/analysis_report.md"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(md)
+import config
+from src.bib_reader import read_wos_batch
+from src.data_clean import clean_data
+from src.index_calc import calc_basic_indices
+from src.co_word_build import build_co_occurrence
+from src.cluster_analysis import cluster_network
+from src.static_plot import plot_year_trend
+from src.interactive_viz import interactive_cluster_graph
+from src.report_generator import generate_markdown_report
+
+# 1. 读取
+df = read_wos_batch(config.DATA_FOLDER)
+print(f"读取文献：{len(df)} 篇")
+
+# 2. 清洗
+df = clean_data(df)
+print(f"清洗后有效文献：{len(df)} 篇")
+
+# 3. 指标
+indices = calc_basic_indices(df)
+
+# 4. 共现
+co_matrix, _ = build_co_occurrence(df, top_n=config.TOP_KEYWORD_NUM)
+
+# 5. 聚类
+G, part, cluster_df = cluster_network(co_matrix, threshold=config.CO_OCCUR_THRESHOLD)
+
+# 6. 绘图
+plot_year_trend(df)
+interactive_cluster_graph(G, part)
+
+# 7. 报告
+generate_markdown_report(indices, cluster_df)
+
+# 8. 保存表格
+co_matrix.to_csv(f"{config.OUTPUT_CSV}/co_occurrence.csv", encoding="utf-8-sig")
+cluster_df.to_csv(f"{config.OUTPUT_CSV}/cluster_stats.csv", index=False, encoding="utf-8-sig")
+
+print("\n✅ 全部分析完成！")
+print("📁 结果在 output/ 文件夹")
+pandas
+numpy
+matplotlib
+networkx
+python-louvain
+pyvis
+openpyxl
+tabulate
+# 文献计量Python项目
+对标 group-nine-project 重构，支持 WOS 数据、关键词聚类、交互式图谱。
+
+## 快速运行
+pip install -r requirements.txt
+python run_full_analysis.py
+
+## 输出
+output/csv_result        表格结果
+output/pic_static        静态图
+output/html_interactive  可交互网络图
+output/report            分析报告
+pip install -r requirements.txt
+python run_full_analysis.py
