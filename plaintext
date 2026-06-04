@@ -1,13 +1,2 @@
-明文/
-├─data/sample-wos 【已有WOS数据，完全不动】
-├─docs 【放入你的Bibliometrics_Python_Minimal_Project_Manual.docx】
-├─src 【源码目录】
-├─outputs
-   ├─tables 指标/聚类/共现表格
-   ├─figures 静态图片
-   └─html 交互式图谱html
-├─config.py
-├─run_full_analysis.py（一键入口）
-├─requirements.txt
-└─README.md（同步更新项目说明）
 mkdir docs src outputs outputs\tables outputs\figures outputs\html
+
