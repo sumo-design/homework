@@ -1,1 +1,21 @@
 
+homework/
+├── data/                # 保留你原有的 sample-wos 不动
+│   └── sample-wos/
+├── docs/                # 新建
+│   └── Bibliometrics_Python_Minimal_Project_Trae_Manual.docx
+├── src/                 # 新建，放所有代码
+│   ├── __init__.py
+│   ├── bib_reader.py
+│   ├── data_clean.py
+│   ├── index_calc.py
+│   ├── co_word_build.py
+│   ├── cluster_analysis.py
+│   ├── static_plot.py
+│   ├── interactive_viz.py
+│   └── report_generator.py
+├── output/              # 自动生成，不用新建
+├── config.py
+├── run_full_analysis.py
+├── requirements.txt
+└── README.md
